@@ -1,0 +1,58 @@
+{
+  "entities": {
+    "user": {
+      "title": "User",
+      "description": "Represents a user of the Altura platform.",
+      "type": "object",
+      "properties": {
+        "displayName": { "type": "string", "description": "The user's full name." },
+        "email": { "type": "string", "format": "email", "description": "The user's email address." },
+        "photoURL": { "type": "string", "description": "URL to the user's profile picture." },
+        "role": { "type": "string", "enum": ["member", "admin"], "description": "The user's access role." },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Timestamp when the user profile was created." }
+      },
+      "required": ["displayName", "email", "createdAt"]
+    },
+    "project": {
+      "title": "Project",
+      "description": "A workspace for a team to collaborate on tasks.",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string", "description": "The name of the project." },
+        "description": { "type": "string", "description": "A brief overview of the project." },
+        "ownerId": { "type": "string", "description": "The UID of the user who owns the project." },
+        "members": { "type": "array", "description": "List of user UIDs who are members of this project." },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Timestamp when the project was created." }
+      },
+      "required": ["name", "ownerId", "members", "createdAt"]
+    },
+    "task": {
+      "title": "Task",
+      "description": "A specific item of work within a project.",
+      "type": "object",
+      "properties": {
+        "title": { "type": "string", "description": "The title of the task." },
+        "description": { "type": "string", "description": "Detailed information about the task." },
+        "status": { "type": "string", "enum": ["todo", "in-progress", "completed"], "description": "The current state of the task." },
+        "assigneeId": { "type": "string", "description": "The UID of the user assigned to this task." },
+        "projectId": { "type": "string", "description": "The ID of the parent project." },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Timestamp when the task was created." }
+      },
+      "required": ["title", "status", "projectId", "createdAt"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "user",
+      "description": "User profile documents."
+    },
+    "/projects/{projectId}": {
+      "schema": "project",
+      "description": "Project workspace documents."
+    },
+    "/projects/{projectId}/tasks/{taskId}": {
+      "schema": "task",
+      "description": "Tasks within a specific project."
+    }
+  }
+}

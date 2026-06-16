@@ -1,0 +1,122 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // 1. Global Safety Net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // --- Helper Functions ---
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    // Secure Role Lookup
+    function isAdmin() {
+      return isSignedIn() && 
+        exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == "admin";
+    }
+
+    // --- Validation Helpers ---
+    function isValidUser(data) {
+      let size = data.keys().size();
+      return data.keys().hasAll(['displayName', 'email', 'createdAt'])
+        && (size >= 3 && size <= 5) // photoURL and role are optional
+        && data.displayName is string && data.displayName.size() > 0 && data.displayName.size() <= 100
+        && data.email is string && data.email.size() > 0 && data.email.size() <= 255
+        && (!data.keys().contains('photoURL') || (data.photoURL is string && data.photoURL.size() <= 1000))
+        && (!data.keys().contains('role') || (data.role in ['member', 'admin']))
+        && data.createdAt == request.time;
+    }
+
+    function isValidProject(data) {
+      return data.keys().hasAll(['name', 'ownerId', 'members', 'createdAt'])
+        && data.keys().size() >= 4 && data.keys().size() <= 5
+        && data.name is string && data.name.size() > 0 && data.name.size() <= 100
+        && data.ownerId == request.auth.uid
+        && data.members is list && data.members.size() <= 50
+        && data.createdAt == request.time;
+    }
+
+    function isValidTask(data) {
+      return data.keys().hasAll(['title', 'status', 'projectId', 'createdAt'])
+        && data.keys().size() >= 4 && data.keys().size() <= 6
+        && data.title is string && data.title.size() > 0 && data.title.size() <= 200
+        && data.status in ['todo', 'in-progress', 'completed']
+        && data.projectId is string
+        && data.createdAt == request.time;
+    }
+
+    // --- Collection Rules ---
+
+    match /users/{userId} {
+      allow get: if isSignedIn() && (isOwner(userId) || isAdmin());
+      allow list: if isAdmin();
+      
+      // Let standard users create their profile, but lock role to 'member' unless bootstrapped via admin email
+      allow create: if isOwner(userId) && isValidUser(incoming()) && 
+        (!incoming().keys().contains('role') || incoming().role == 'member' || request.auth.token.email == 'embrujitos123@gmail.com');
+      
+      // Prevent modification of role field by standard users, only allow admins to change roles
+      allow update: if isValidUser(incoming()) && (
+        (isOwner(userId) && incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'photoURL'])) ||
+        isAdmin()
+      );
+      
+      allow delete: if isAdmin();
+    }
+
+    match /projects/{projectId} {
+      allow get: if isSignedIn() && (request.auth.uid == existing().ownerId || request.auth.uid in existing().members || isAdmin());
+      allow list: if isSignedIn() && (resource.data.ownerId == request.auth.uid || request.auth.uid in resource.data.members || isAdmin());
+      allow create: if isSignedIn() && isValidProject(incoming());
+      allow update: if isSignedIn() && (
+        ((request.auth.uid == existing().ownerId) && isValidProject(incoming()) && incoming().diff(existing()).affectedKeys().hasOnly(['name', 'description', 'members'])) ||
+        isAdmin()
+      );
+      allow delete: if isSignedIn() && (request.auth.uid == existing().ownerId || isAdmin());
+
+      match /tasks/{taskId} {
+        function canAccessProject() {
+          let project = get(/databases/$(database)/documents/projects/$(projectId)).data;
+          return request.auth.uid == project.ownerId || request.auth.uid in project.members || isAdmin();
+        }
+
+        allow get, list: if isSignedIn() && canAccessProject();
+        allow create: if isSignedIn() && canAccessProject() && isValidTask(incoming()) && incoming().projectId == projectId;
+        allow update: if isSignedIn() && canAccessProject() && isValidTask(incoming())
+          && (
+            // Owner can edit everything
+            (request.auth.uid == get(/databases/$(database)/documents/projects/$(projectId)).data.ownerId) ||
+            // Members can only edit status or assignee
+            (incoming().diff(existing()).affectedKeys().hasOnly(['status', 'assigneeId'])) ||
+            // Admin escape hatch
+            isAdmin()
+          );
+        allow delete: if isSignedIn() && (request.auth.uid == get(/databases/$(database)/documents/projects/$(projectId)).data.ownerId || isAdmin());
+      }
+    }
+
+    match /properties/{propertyId} {
+      allow get, list: if true;
+      allow create, update, delete: if isSignedIn();
+    }
+  }
+}
